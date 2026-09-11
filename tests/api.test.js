@@ -65,3 +65,22 @@ test("GraphQL mutation updates the same account used by REST", async () => {
     assert.deepEqual(mutated.data.updateAccount, { id: "1", balance: 51000 });
     assert.equal(restAccount.data.balance, 51000);
 });
+
+test("GraphQL transactions are nested in an account and update its REST balance", async () => {
+    const mutationResponse = await fetch(`${baseUrl}/graphql`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            query: 'mutation { addTransaction(accountId: "2", input: { type: "credit", amount: 500, description: "Cash deposit" }) { type amount } }'
+        })
+    });
+    const mutation = await mutationResponse.json();
+    const accountResponse = await fetch(`${baseUrl}/api/v2/accounts/2`);
+    const account = await accountResponse.json();
+    const transactionsResponse = await fetch(`${baseUrl}/api/v2/accounts/2/transactions`);
+    const transactions = await transactionsResponse.json();
+
+    assert.deepEqual(mutation.data.addTransaction, { type: "credit", amount: 500 });
+    assert.equal(account.data.balance, 75500);
+    assert.equal(transactions.data.at(-1).description, "Cash deposit");
+});

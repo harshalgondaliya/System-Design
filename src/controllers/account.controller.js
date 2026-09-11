@@ -1,5 +1,5 @@
 const store = require("../data/accounts.store");
-const { isNonEmptyString, isValidAccountType, isValidBalance, parseAccountId } = require("../utils/validation");
+const { isNonEmptyString, isValidAccountType, isValidAddress, isValidBalance, isValidTransactionType, normalizeAddress, parseAccountId } = require("../utils/validation");
 
 // v1 is intentionally a small legacy contract; v2 exposes the full account.
 const toV1 = (account) => ({ id: account.id, name: account.accountHolder, balance: account.balance });
@@ -19,13 +19,31 @@ const validateV1 = ({ name, balance }, partial = false) => {
     return null;
 };
 
-const validateV2 = ({ accountNumber, accountHolder, accountType, balance }, partial = false) => {
+const validateV2 = ({ accountNumber, accountHolder, accountType, balance, address }, partial = false) => {
     if (!partial && (!isNonEmptyString(accountHolder) || !isValidBalance(balance))) return "accountHolder (text) and balance (a non-negative number) are required";
-    if (partial && accountNumber === undefined && accountHolder === undefined && accountType === undefined && balance === undefined) return "provide at least one account field to update";
+    if (partial && accountNumber === undefined && accountHolder === undefined && accountType === undefined && balance === undefined && address === undefined) return "provide at least one account field to update";
     if (accountNumber !== undefined && !isNonEmptyString(accountNumber)) return "accountNumber must be non-empty text";
     if (accountHolder !== undefined && !isNonEmptyString(accountHolder)) return "accountHolder must be non-empty text";
     if (accountType !== undefined && !isValidAccountType(accountType)) return "accountType must be savings or current";
     if (balance !== undefined && !isValidBalance(balance)) return "balance must be a non-negative number";
+    if (address !== undefined && !isValidAddress(address)) return "address must include street, city, state, postalCode, and country";
+    return null;
+};
+
+const toV2Changes = ({ accountNumber, accountHolder, accountType, balance, address }) => {
+    const changes = {};
+    if (accountNumber !== undefined) changes.accountNumber = accountNumber.trim();
+    if (accountHolder !== undefined) changes.accountHolder = accountHolder.trim();
+    if (accountType !== undefined) changes.accountType = accountType;
+    if (balance !== undefined) changes.balance = balance;
+    if (address !== undefined) changes.address = normalizeAddress(address);
+    return changes;
+};
+
+const validateTransaction = ({ type, amount, description }) => {
+    if (!isValidTransactionType(type)) return "type must be credit or debit";
+    if (!isValidBalance(amount) || amount === 0) return "amount must be a positive number";
+    if (description !== undefined && !isNonEmptyString(description)) return "description must be non-empty text";
     return null;
 };
 
@@ -72,7 +90,7 @@ const getV2 = (req, res) => {
 const createV2 = (req, res) => {
     const message = validateV2(req.body);
     if (message) return error(res, "v2", 400, message);
-    const account = store.createAccount({ ...req.body, accountNumber: req.body.accountNumber?.trim(), accountHolder: req.body.accountHolder.trim() });
+    const account = store.createAccount(toV2Changes(req.body));
     return res.status(201).json({ version: "v2", success: true, data: toV2(account) });
 };
 const replaceV2 = (req, res) => {
@@ -82,7 +100,7 @@ const replaceV2 = (req, res) => {
     if (message) return error(res, "v2", 400, message);
     const existing = store.getAccountById(id);
     if (!existing) return error(res, "v2", 404, "Account not found");
-    const account = store.updateAccount(id, { accountNumber: req.body.accountNumber?.trim() || existing.accountNumber, accountHolder: req.body.accountHolder.trim(), accountType: req.body.accountType || "savings", balance: req.body.balance });
+    const account = store.updateAccount(id, { ...toV2Changes(req.body), accountNumber: req.body.accountNumber?.trim() || existing.accountNumber, accountType: req.body.accountType || "savings", address: req.body.address === undefined ? existing.address : normalizeAddress(req.body.address) });
     return res.json({ version: "v2", success: true, data: toV2(account) });
 };
 const updateV2 = (req, res) => {
@@ -90,11 +108,28 @@ const updateV2 = (req, res) => {
     if (!id) return;
     const message = validateV2(req.body, true);
     if (message) return error(res, "v2", 400, message);
-    const changes = { ...req.body };
-    if (changes.accountNumber !== undefined) changes.accountNumber = changes.accountNumber.trim();
-    if (changes.accountHolder !== undefined) changes.accountHolder = changes.accountHolder.trim();
+    const changes = toV2Changes(req.body);
     const account = store.updateAccount(id, changes);
     return account ? res.json({ version: "v2", success: true, data: toV2(account) }) : error(res, "v2", 404, "Account not found");
+};
+
+const listTransactions = (req, res) => {
+    const id = validId(res, "v2", req.params.id);
+    if (!id) return;
+    const transactions = store.getTransactions(id);
+    return transactions ? res.json({ version: "v2", success: true, count: transactions.length, data: transactions }) : error(res, "v2", 404, "Account not found");
+};
+
+const createTransaction = (req, res) => {
+    const id = validId(res, "v2", req.params.id);
+    if (!id) return;
+    const message = validateTransaction(req.body);
+    if (message) return error(res, "v2", 400, message);
+    const account = store.getAccountById(id);
+    if (!account) return error(res, "v2", 404, "Account not found");
+    if (req.body.type === "debit" && req.body.amount > account.balance) return error(res, "v2", 400, "Insufficient balance for this debit transaction");
+    const transaction = store.addTransaction(id, { ...req.body, description: req.body.description?.trim() });
+    return res.status(201).json({ version: "v2", success: true, message: "Transaction added and account balance updated", data: transaction, balance: store.getAccountById(id).balance });
 };
 
 const remove = (version, mapper) => (req, res) => {
@@ -106,5 +141,6 @@ const remove = (version, mapper) => (req, res) => {
 
 module.exports = {
     listV1, getV1, createV1, replaceV1, updateV1, deleteV1: remove("v1", toV1),
-    listV2, getV2, createV2, replaceV2, updateV2, deleteV2: remove("v2", toV2)
+    listV2, getV2, createV2, replaceV2, updateV2, deleteV2: remove("v2", toV2),
+    listTransactions, createTransaction
 };

@@ -69,7 +69,7 @@ v1 keeps the older, simpler field names: `id`, `name`, and `balance`.
 
 ### v2 — improved API contract
 
-v2 adds `accountNumber`, `accountHolder`, and `accountType`. Use this version for new clients.
+v2 adds `accountNumber`, `accountHolder`, `accountType`, a nested `address`, and transaction history. Use this version for new clients.
 
 | Action | Method | URL | Body |
 | --- | --- | --- | --- |
@@ -79,6 +79,8 @@ v2 adds `accountNumber`, `accountHolder`, and `accountType`. Use this version fo
 | Replace | `PUT` | `{{baseUrl}}/api/v2/accounts/1` | see below |
 | Update partly | `PATCH` | `{{baseUrl}}/api/v2/accounts/1` | `{"balance":51000}` |
 | Delete | `DELETE` | `{{baseUrl}}/api/v2/accounts/1` | none |
+| List transactions | `GET` | `{{baseUrl}}/api/v2/accounts/1/transactions` | none |
+| Add a transaction | `POST` | `{{baseUrl}}/api/v2/accounts/1/transactions` | see below |
 
 Use this JSON body when creating an account in v2. `accountNumber` is optional and is generated if you omit it.
 
@@ -86,7 +88,14 @@ Use this JSON body when creating an account in v2. `accountNumber` is optional a
 {
   "accountHolder": "Asha",
   "accountType": "savings",
-  "balance": 1250
+  "balance": 1250,
+  "address": {
+    "street": "12 University Road",
+    "city": "Ahmedabad",
+    "state": "Gujarat",
+    "postalCode": "380009",
+    "country": "India"
+  }
 }
 ```
 
@@ -102,6 +111,23 @@ For a `PUT` request, send the values you want the account to have:
 ```
 
 `accountType` must be `savings` or `current`; `balance` must be a non-negative number. A successful create returns status **201**. Invalid input returns **400**; an account that does not exist returns **404**.
+
+### Transaction sub-data
+
+Transactions are nested data inside an account. Add one with this v2 request:
+
+```http
+POST /api/v2/accounts/1/transactions
+Content-Type: application/json
+
+{
+  "type": "debit",
+  "amount": 500,
+  "description": "ATM withdrawal"
+}
+```
+
+`type` is `credit` (adds to the balance) or `debit` (subtracts from the balance). A debit cannot be greater than the available balance.
 
 ## 4. Test GraphQL in GraphiQL
 
@@ -120,6 +146,16 @@ query {
     accountHolder
     accountType
     balance
+    address {
+      city
+      country
+    }
+    transactions {
+      id
+      type
+      amount
+      description
+    }
   }
 }
 ```
@@ -163,6 +199,23 @@ mutation {
 }
 ```
 
+Add a transaction (this also changes the account balance):
+
+```graphql
+mutation {
+  addTransaction(accountId: "1", input: {
+    type: "debit"
+    amount: 500
+    description: "ATM withdrawal"
+  }) {
+    id
+    type
+    amount
+    createdAt
+  }
+}
+```
+
 REST and GraphQL use the same account store. An account created through v2 can immediately be queried from GraphQL.
 
 ## 5. Core concepts to remember
@@ -188,7 +241,7 @@ In this project, the same account looks different in each version:
 | Version | Example response fields | Why it exists |
 | --- | --- | --- |
 | v1 | `id`, `name`, `balance` | Older clients can keep working. |
-| v2 | `id`, `accountNumber`, `accountHolder`, `accountType`, `balance` | New clients receive a better account format. |
+| v2 | Account fields plus nested `address` and `transactions` | New clients receive a better account format. |
 
 For example, an old application can call `/api/v1/accounts/1`, while a new application can call `/api/v2/accounts/1`.
 
