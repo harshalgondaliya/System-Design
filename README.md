@@ -45,6 +45,55 @@ You can use any of these:
 - **Browser** — useful for simple `GET` requests such as `http://localhost:3000/api/v2/accounts`.
 - **Terminal** — run `npm test` for the included automated tests.
 
+## How to find the parameters when you forget them
+
+### REST parameters
+
+REST does not automatically describe its request body in the browser. Use the v1/v2 request tables and JSON examples in this README as the API documentation.
+
+For example, when making `POST /api/v2/accounts`, these are the accepted body fields:
+
+| Field | Required? | Type / allowed values |
+| --- | --- | --- |
+| `accountHolder` | Yes | Non-empty text |
+| `balance` | Yes | Number, `0` or more |
+| `accountNumber` | No | Non-empty text; generated if omitted |
+| `accountType` | No | `savings` or `current`; defaults to `savings` |
+| `address` | No | Object containing all address fields below |
+
+If you send an address, it must contain all of these fields: `street`, `city`, `state`, `postalCode`, and `country`.
+
+For `POST /api/v2/accounts/:id/transactions`, use:
+
+| Field | Required? | Type / allowed values |
+| --- | --- | --- |
+| `type` | Yes | `credit` or `debit` |
+| `amount` | Yes | Positive number |
+| `description` | No | Non-empty text |
+
+In Postman, send a `POST`, `PUT`, or `PATCH` request with **Body → raw → JSON**. If a required parameter is missing or invalid, the API returns status `400` with a message explaining the problem.
+
+### GraphQL parameters and fields
+
+GraphQL provides its own built-in documentation. Open `http://localhost:3000/graphql`, then click **Docs** in the upper-right corner. You can browse:
+
+1. **Query** to see available read operations such as `accounts` and `account`.
+2. **Mutation** to see changes such as `createAccount`, `updateAccount`, and `addTransaction`.
+3. An input type, such as `CreateAccountInput` or `AddressInput`, to see every accepted parameter, its type, and whether it is required (`!`).
+
+You can also use GraphiQL autocomplete: type `{` or start typing a field name, then press `Ctrl + Space`.
+
+Run this introspection query to list the available GraphQL query and mutation names:
+
+```graphql
+query {
+  __schema {
+    queryType { fields { name } }
+    mutationType { fields { name } }
+  }
+}
+```
+
 ## 3. Test REST in Postman
 
 1. Start the server with `npm start`.
@@ -112,6 +161,46 @@ For a `PUT` request, send the values you want the account to have:
 
 `accountType` must be `savings` or `current`; `balance` must be a non-negative number. A successful create returns status **201**. Invalid input returns **400**; an account that does not exist returns **404**.
 
+### Address sub-data
+
+An address belongs to one account, so it is returned inside the v2 account response. Read it by sending:
+
+```http
+GET /api/v2/accounts/1
+```
+
+The response includes an `address` object like this:
+
+```json
+{
+  "id": 1,
+  "accountHolder": "Harshal",
+  "address": {
+    "street": "12 University Road",
+    "city": "Ahmedabad",
+    "state": "Gujarat",
+    "postalCode": "380009",
+    "country": "India"
+  }
+}
+```
+
+Update an address through v2 with `PATCH /api/v2/accounts/1`. Send the complete address object:
+
+```json
+{
+  "address": {
+    "street": "20 New Road",
+    "city": "Ahmedabad",
+    "state": "Gujarat",
+    "postalCode": "380015",
+    "country": "India"
+  }
+}
+```
+
+All five address fields are required when you add or update an address: `street`, `city`, `state`, `postalCode`, and `country`.
+
 ### Transaction sub-data
 
 Transactions are nested data inside an account. Add one with this v2 request:
@@ -160,6 +249,23 @@ query {
 }
 ```
 
+Query only an account address:
+
+```graphql
+query {
+  account(id: "1") {
+    accountHolder
+    address {
+      street
+      city
+      state
+      postalCode
+      country
+    }
+  }
+}
+```
+
 Create an account:
 
 ```graphql
@@ -184,6 +290,25 @@ mutation {
     id
     accountHolder
     balance
+  }
+}
+```
+
+Update an address through GraphQL:
+
+```graphql
+mutation {
+  updateAccount(id: "1", input: {
+    address: {
+      street: "20 New Road"
+      city: "Ahmedabad"
+      state: "Gujarat"
+      postalCode: "380015"
+      country: "India"
+    }
+  }) {
+    id
+    address { city postalCode }
   }
 }
 ```
@@ -291,3 +416,18 @@ mutation {
 Account `1` is deleted from the shared store. It is not only deleted from GraphQL.
 
 In this practice project, data is an in-memory JavaScript array, so restarting the server brings the sample accounts back. In a real application, v1, v2, and GraphQL would normally share one database such as MongoDB or MySQL.
+
+## 6. Dockerization
+
+This project can also be run using Docker.
+
+### Build the Docker Image
+
+Make sure Docker Desktop is running, then open PowerShell in the project folder and run:
+
+```powershell
+docker build -t bank-api .
+
+docker rm bank-api-container
+
+docker run --name bank-api-container -p 3000:3000 bank-api
